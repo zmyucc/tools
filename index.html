@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>串口助手</title>
+<style>
+  :root { color-scheme: light; }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f5f6fa;
+    color: #2d3436;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+
+  .container {
+    width: 100%;
+    max-width: 960px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #2d3436;
+  }
+
+  .header .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #b2bec3;
+    flex-shrink: 0;
+  }
+
+  .header .dot.connected { background: #00b894; }
+  .header .dot.error    { background: #e17055; }
+
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 18px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #636e72;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+  }
+
+  /* ---- 串口配置 ---- */
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+    gap: 10px;
+    align-items: end;
+  }
+
+  .field { display: flex; flex-direction: column; gap: 4px; }
+
+  .field label {
+    font-size: 12px;
+    color: #636e72;
+    font-weight: 500;
+  }
+
+  .field select, .field input {
+    height: 36px;
+    border: 1px solid #dfe6e9;
+    border-radius: 6px;
+    padding: 0 10px;
+    font-size: 13px;
+    color: #2d3436;
+    background: #fff;
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+
+  .field select:focus, .field input:focus { border-color: #6c5ce7; }
+
+  .btn-row { display: flex; gap: 8px; align-items: end; }
+
+  .btn {
+    height: 36px;
+    padding: 0 18px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+  }
+
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .btn-primary   { background: #6c5ce7; color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #5a4bd1; }
+  .btn-danger    { background: #e17055; color: #fff; }
+  .btn-danger:hover:not(:disabled) { background: #d35447; }
+  .btn-outline   { background: #fff; color: #6c5ce7; border: 1px solid #6c5ce7; }
+  .btn-outline:hover:not(:disabled) { background: #f3f0ff; }
+  .btn-sm { height: 30px; padding: 0 12px; font-size: 12px; }
+
+  /* ---- 收发区域 ---- */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .toolbar select {
+    height: 30px;
+    border: 1px solid #dfe6e9;
+    border-radius: 6px;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #2d3436;
+    background: #fff;
+    outline: none;
+  }
+
+  .toolbar select:focus { border-color: #6c5ce7; }
+
+  textarea {
+    width: 100%;
+    height: 220px;
+    border: 1px solid #dfe6e9;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: "SF Mono", "Fira Code", "Consolas", "Menlo", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #2d3436;
+    background: #fafbfc;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  textarea:focus { border-color: #6c5ce7; }
+  textarea[readonly] { color: #636e72; }
+
+  .status-bar {
+    font-size: 11px;
+    color: #b2bec3;
+    margin-top: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .send-btn-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+
+  #repeat-interval {
+    width: 60px;
+    height: 30px;
+    border: 1px solid #dfe6e9;
+    border-radius: 6px;
+    text-align: center;
+    font-size: 13px;
+    outline: none;
+  }
+  #repeat-interval:focus { border-color: #6c5ce7; }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- 标题 -->
+  <div class="header">
+    <div class="dot" id="status-dot"></div>
+    <h1>串口助手</h1>
+    <span id="status-text" style="font-size:12px;color:#b2bec3;">未连接</span>
+  </div>
+
+  <!-- 串口配置 -->
+  <div class="card">
+    <div class="card-title">串口配置</div>
+    <div class="config-grid">
+      <div class="field">
+        <label>串口号</label>
+        <select id="port-selector">
+          <option value="">— 请先点击打开 —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="baud-rate">波特率</label>
+        <input list="baud-list" id="baud-rate" value="115200" placeholder="115200">
+        <datalist id="baud-list">
+          <option value="300"><option value="600"><option value="1200"><option value="2400">
+          <option value="4800"><option value="9600"><option value="19200"><option value="38400">
+          <option value="57600"><option value="115200">
+        </datalist>
+      </div>
+      <div class="field">
+        <label for="data-bits">数据位</label>
+        <select id="data-bits">
+          <option value="7">7</option>
+          <option value="8" selected>8</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="stop-bits">停止位</label>
+        <select id="stop-bits">
+          <option value="1" selected>1</option>
+          <option value="2">2</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="parity">校验位</label>
+        <select id="parity">
+          <option value="none" selected>无校验 (None)</option>
+          <option value="odd">奇校验 (Odd)</option>
+          <option value="even">偶校验 (Even)</option>
+        </select>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-open" onclick="openPort()">打开串口</button>
+        <button class="btn btn-danger" id="btn-close" onclick="closePort()" disabled>关闭串口</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 收发区域 -->
+  <div class="two-col">
+    <!-- 接收区 -->
+    <div class="card">
+      <div class="card-title">接收区</div>
+      <div class="toolbar">
+        <select id="rx-mode">
+          <option value="ascii">ASCII</option>
+          <option value="hex">HEX</option>
+        </select>
+        <select id="rx-encoding">
+          <option value="utf-8">UTF-8</option>
+          <option value="gbk">GBK</option>
+        </select>
+        <span style="flex:1;"></span>
+        <button class="btn btn-sm btn-outline" onclick="clearRx()">清空</button>
+      </div>
+      <textarea id="rx-area" readonly placeholder="接收数据…"></textarea>
+      <div class="status-bar">
+        <span id="rx-count">接收: 0 字节</span>
+      </div>
+    </div>
+
+    <!-- 发送区 -->
+    <div class="card">
+      <div class="card-title">发送区</div>
+      <div class="toolbar">
+        <select id="tx-mode">
+          <option value="ascii">ASCII</option>
+          <option value="hex">HEX</option>
+        </select>
+        <select id="tx-encoding">
+          <option value="utf-8">UTF-8</option>
+          <option value="gbk">GBK</option>
+        </select>
+        <span style="flex:1;"></span>
+        <label style="font-size:12px;color:#636e72;display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" id="send-newline" checked> 加换行
+        </label>
+        <button class="btn btn-sm btn-outline" onclick="clearTx()">清空</button>
+      </div>
+      <textarea id="tx-area" placeholder="输入发送内容…"></textarea>
+      <div class="send-btn-row">
+        <button class="btn btn-primary" id="btn-send" onclick="sendData()" disabled>发送</button>
+        <label style="font-size:12px;color:#636e72;display:flex;align-items:center;gap:4px;margin-left:8px;">
+          <input type="checkbox" id="repeat-send"> 定时
+        </label>
+        <input type="number" id="repeat-interval" value="1000" min="50" step="50" title="毫秒">
+        <span style="font-size:12px;color:#636e72;">ms</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ---- DOM 引用 ----
+const $ = id => document.getElementById(id);
+const statusDot   = $('status-dot');
+const statusText  = $('status-text');
+const portSelect  = $('port-selector');
+const btnOpen     = $('btn-open');
+const btnClose    = $('btn-close');
+const btnSend     = $('btn-send');
+const rxArea      = $('rx-area');
+const txArea      = $('tx-area');
+const rxCount     = $('rx-count');
+const repeatSend  = $('repeat-send');
+const repeatIntv  = $('repeat-interval');
+
+// ---- 串口实例 ----
+let port = null;
+let reader = null;
+let writer = null;
+let readLoopAbort = null;
+let rxTotalBytes = 0;
+let repeatTimer = null;
+
+// ---- 编码 / 解码 ----
+function getDecoder(encoding) {
+  if (encoding === 'gbk') {
+    try { return new TextDecoder('gbk'); } catch (e) {}
+    try { return new TextDecoder('gb2312'); } catch (e) {}
+  }
+  return new TextDecoder(encoding);
+}
+
+function getEncoder(encoding) {
+  if (encoding === 'gbk') {
+    try { return new TextEncoder('gbk'); } catch (e) {}
+    try { return new TextEncoder('gb2312'); } catch (e) {}
+  }
+  return new TextEncoder();
+}
+
+// ---- 字节数组 → HEX 字符串 ----
+function bytesToHex(bytes) {
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+    .join(' ');
+}
+
+// ---- HEX 字符串 → 字节数组 ----
+function hexToBytes(hex) {
+  const cleaned = hex.replace(/\s+/g, '');
+  if (cleaned.length % 2 !== 0) throw new Error('HEX 长度必须为偶数');
+  const bytes = new Uint8Array(cleaned.length / 2);
+  for (let i = 0; i < cleaned.length; i += 2) {
+    bytes[i / 2] = parseInt(cleaned.substring(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+// ---- 设置 UI 状态 ----
+function setConnected(connected) {
+  btnOpen.disabled = connected;
+  btnClose.disabled = !connected;
+  btnSend.disabled = !connected;
+  portSelect.disabled = connected;
+  if (connected) {
+    statusDot.classList.add('connected');
+    statusDot.classList.remove('error');
+    statusText.textContent = '已连接';
+    statusText.style.color = '#00b894';
+  } else {
+    statusDot.classList.remove('connected', 'error');
+    statusText.textContent = '未连接';
+    statusText.style.color = '#b2bec3';
+  }
+}
+
+// ---- 打开串口 ----
+async function openPort() {
+  if (!('serial' in navigator)) {
+    alert('您的浏览器不支持 Web Serial API。请使用 Chrome / Edge 等 Chromium 内核浏览器。');
+    return;
+  }
+
+  try {
+    // 读取用户选择的值（不再做 sanitize 限制）
+    const baudRate = parseInt($('baud-rate').value) || 115200;
+    const dataBits = parseInt($('data-bits').value) || 8;
+    const stopBits = parseFloat($('stop-bits').value);
+    const parity   = $('parity').value;
+
+    const requestedPort = await navigator.serial.requestPort();
+    await requestedPort.open({ baudRate, dataBits, stopBits, parity });
+
+    port = requestedPort;
+    updatePortSelector();
+
+    // 启动读取循环
+    readLoopAbort = new AbortController();
+    rxTotalBytes = 0;
+    readLoop(port, readLoopAbort.signal);
+
+    setConnected(true);
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      alert('打开串口失败: ' + err.message);
+    }
+  }
+}
+
+// ---- 关闭串口 ----
+async function closePort() {
+  stopRepeatSend();
+  if (readLoopAbort) { readLoopAbort.abort(); readLoopAbort = null; }
+
+  if (reader) {
+    try { await reader.cancel(); } catch (e) {}
+    reader = null;
+  }
+
+  if (writer) {
+    try { await writer.close(); } catch (e) {}
+    writer = null;
+  }
+
+  if (port) {
+    try { await port.close(); } catch (e) {}
+    port = null;
+  }
+
+  setConnected(false);
+}
+
+// ---- 更新串口下拉 ----
+function updatePortSelector() {
+  portSelect.innerHTML = '';
+  if (port) {
+    const info = port.getInfo();
+    const label = info.usbVendorId
+      ? 'USB VID:' + info.usbVendorId.toString(16).toUpperCase() +
+        ' PID:' + info.usbProductId.toString(16).toUpperCase()
+      : '已选串口';
+    const opt = document.createElement('option');
+    opt.value = 'active';
+    opt.textContent = label;
+    opt.selected = true;
+    portSelect.appendChild(opt);
+  }
+}
+
+// ---- 读取循环 ----
+async function readLoop(p, signal) {
+  while (port && !signal.aborted) {
+    try {
+      reader = p.readable.getReader();
+    } catch (e) {
+      break;
+    }
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (signal.aborted) break;
+        appendRx(value);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error('读取错误:', err);
+        statusDot.classList.add('error');
+        statusText.textContent = '读取错误';
+        statusText.style.color = '#e17055';
+      }
+    } finally {
+      try { reader.releaseLock(); } catch (e) {}
+      reader = null;
+    }
+
+    if (!port) break;
+  }
+}
+
+// ---- 追加接收数据 ----
+function appendRx(bytes) {
+  rxTotalBytes += bytes.length;
+  const mode = $('rx-mode').value;
+  const encoding = $('rx-encoding').value;
+
+  let text;
+  if (mode === 'hex') {
+    text = bytesToHex(bytes);
+  } else {
+    const decoder = getDecoder(encoding);
+    text = decoder.decode(bytes, { stream: true });
+  }
+
+  rxArea.value += text;
+  rxArea.scrollTop = rxArea.scrollHeight;
+  rxCount.textContent = '接收: ' + rxTotalBytes.toLocaleString() + ' 字节';
+}
+
+// ---- 发送数据 ----
+async function sendData() {
+  if (!port || !port.writable) return;
+  const raw = txArea.value;
+  if (!raw.trim()) return;
+
+  try {
+    let bytes;
+    const mode = $('tx-mode').value;
+    const encoding = $('tx-encoding').value;
+
+    if (mode === 'hex') {
+      bytes = hexToBytes(raw);
+    } else {
+      const encoder = getEncoder(encoding);
+      bytes = encoder.encode(raw);
+    }
+
+    // 加换行
+    if ($('send-newline').checked) {
+      const newline = new Uint8Array([0x0D, 0x0A]); // CR+LF
+      const combined = new Uint8Array(bytes.length + 2);
+      combined.set(bytes, 0);
+      combined.set(newline, bytes.length);
+      bytes = combined;
+    }
+
+    if (!writer) {
+      writer = port.writable.getWriter();
+    }
+
+    await writer.write(bytes);
+  } catch (err) {
+    alert('发送失败: ' + err.message);
+  }
+}
+
+// ---- 定时发送 ----
+function toggleRepeatSend() {
+  stopRepeatSend();
+  if (repeatSend.checked) {
+    repeatTimer = setInterval(sendData, Math.max(50, parseInt(repeatIntv.value) || 1000));
+  }
+}
+
+function stopRepeatSend() {
+  if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
+}
+
+repeatSend.addEventListener('change', toggleRepeatSend);
+repeatIntv.addEventListener('change', () => {
+  if (repeatSend.checked) toggleRepeatSend();
+});
+
+// ---- 清空 ----
+function clearRx() {
+  rxArea.value = '';
+  rxTotalBytes = 0;
+  rxCount.textContent = '接收: 0 字节';
+}
+function clearTx() { txArea.value = ''; }
+
+// ---- 键盘发送 (Ctrl+Enter) ----
+txArea.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (!repeatSend.checked) sendData();
+  }
+});
+
+// ---- 关闭标签页 / 刷新前清理 ----
+window.addEventListener('beforeunload', function() {
+  stopRepeatSend();
+});
+
+// ---- 初始检查 ----
+if (!('serial' in navigator)) {
+  btnOpen.title = 'Web Serial API 不可用';
+  btnOpen.style.opacity = '0.5';
+}
+</script>
+
+</body>
+</html>
