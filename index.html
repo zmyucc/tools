@@ -9,22 +9,25 @@
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  html, body { height: 100%; }
+
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     background: #f5f6fa;
     color: #2d3436;
-    min-height: 100vh;
     display: flex;
     justify-content: center;
-    padding: 24px 16px;
+    padding: 16px;
+    overflow: hidden;
   }
 
   .container {
     width: 100%;
-    max-width: 960px;
+    max-width: 1200px;
+    height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
   }
 
   .header {
@@ -69,9 +72,13 @@
   /* ---- 串口配置 ---- */
   .config-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
-    gap: 10px;
+    grid-template-columns: minmax(180px, 1.4fr) minmax(110px, 1fr) minmax(64px, 0.55fr) minmax(64px, 0.55fr) minmax(130px, 1.1fr) auto;
+    gap: 12px;
     align-items: end;
+  }
+
+  @media (max-width: 900px) {
+    .config-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   }
 
   .field { display: flex; flex-direction: column; gap: 4px; }
@@ -121,14 +128,21 @@
   .btn-outline:hover:not(:disabled) { background: #f3f0ff; }
   .btn-sm { height: 30px; padding: 0 12px; font-size: 12px; }
 
-  /* ---- 收发区域 ---- */
+  /* ---- 收发区域：撑满页面剩余高度 ---- */
   .two-col {
+    flex: 1;
+    min-height: 0;
     display: grid;
     grid-template-columns: 1fr 1fr;
+    grid-template-rows: minmax(0, 1fr);
     gap: 16px;
   }
 
-  @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+  .two-col .card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
 
   .toolbar {
     display: flex;
@@ -153,7 +167,8 @@
 
   textarea {
     width: 100%;
-    height: 220px;
+    flex: 1;
+    min-height: 0;
     border: 1px solid #dfe6e9;
     border-radius: 8px;
     padding: 10px 12px;
@@ -162,7 +177,7 @@
     line-height: 1.5;
     color: #2d3436;
     background: #fafbfc;
-    resize: vertical;
+    resize: none;
     outline: none;
     transition: border-color 0.15s;
   }
@@ -173,8 +188,10 @@
   .status-bar {
     font-size: 11px;
     color: #b2bec3;
-    margin-top: 6px;
+    margin-top: 8px;
+    min-height: 36px;
     display: flex;
+    align-items: center;
     justify-content: space-between;
   }
 
@@ -190,6 +207,15 @@
     outline: none;
   }
   #repeat-interval:focus { border-color: #6c5ce7; }
+
+  /* ---- 小屏或过矮窗口：回退为常规可滚动布局 ---- */
+  @media (max-width: 640px), (max-height: 480px) {
+    html, body { height: auto; }
+    body { overflow: auto; }
+    .container { height: auto; }
+    .two-col { grid-template-columns: 1fr; grid-template-rows: none; }
+    textarea { flex: none; height: 200px; }
+  }
 </style>
 </head>
 <body>
@@ -265,6 +291,9 @@
           <option value="utf-8">UTF-8</option>
           <option value="gbk">GBK</option>
         </select>
+        <label style="font-size:12px;color:#636e72;display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" id="rx-timestamp" checked> 时间戳
+        </label>
         <span style="flex:1;"></span>
         <button class="btn btn-sm btn-outline" onclick="clearRx()">清空</button>
       </div>
@@ -289,6 +318,9 @@
         <span style="flex:1;"></span>
         <label style="font-size:12px;color:#636e72;display:flex;align-items:center;gap:4px;">
           <input type="checkbox" id="send-newline" checked> 加换行
+        </label>
+        <label style="font-size:12px;color:#636e72;display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" id="tx-echo" checked> 回显
         </label>
         <button class="btn btn-sm btn-outline" onclick="clearTx()">清空</button>
       </div>
@@ -320,6 +352,8 @@ const txArea      = $('tx-area');
 const rxCount     = $('rx-count');
 const repeatSend  = $('repeat-send');
 const repeatIntv  = $('repeat-interval');
+const rxTimestamp = $('rx-timestamp');
+const txEcho      = $('tx-echo');
 
 // ---- 串口实例 ----
 let port = null;
@@ -328,6 +362,7 @@ let writer = null;
 let readLoopAbort = null;
 let rxTotalBytes = 0;
 let repeatTimer = null;
+let rxDecoder = null; // 跨数据块复用，串口分包拆散多字节字符时仍能正确解码
 
 // ---- 编码 / 解码 ----
 function getDecoder(encoding) {
@@ -338,6 +373,8 @@ function getDecoder(encoding) {
   return new TextDecoder(encoding);
 }
 
+// 注意：浏览器原生 TextEncoder 不接受编码参数，输出只会是 UTF-8；
+// 即发送区选择 GBK 时，中文实际仍按 UTF-8 编码发出。
 function getEncoder(encoding) {
   if (encoding === 'gbk') {
     try { return new TextEncoder('gbk'); } catch (e) {}
@@ -362,6 +399,28 @@ function hexToBytes(hex) {
     bytes[i / 2] = parseInt(cleaned.substring(i, i + 2), 16);
   }
   return bytes;
+}
+
+// ---- 当前时间字符串 HH:MM:SS.mmm ----
+function timestampString() {
+  const d = new Date();
+  const pad = (n, w) => String(n).padStart(w, '0');
+  return pad(d.getHours(), 2) + ':' + pad(d.getMinutes(), 2) + ':' +
+         pad(d.getSeconds(), 2) + '.' + pad(d.getMilliseconds(), 3);
+}
+
+// ---- 时间戳分组 ----
+// 同一批到达的数据（相邻分包间隔不超过 GROUP_GAP_MS）共用一个时间戳：
+// 时间独占一行显示在上方，消息显示在下方。
+const GROUP_GAP_MS = 50;
+let lastRxTime = 0;
+
+function atLineStart() {
+  return rxArea.value === '' || rxArea.value.endsWith('\n');
+}
+
+function newGroup() {
+  return (atLineStart() ? '' : '\n') + '[' + timestampString() + ']\n';
 }
 
 // ---- 设置 UI 状态 ----
@@ -405,6 +464,8 @@ async function openPort() {
     // 启动读取循环
     readLoopAbort = new AbortController();
     rxTotalBytes = 0;
+    rxDecoder = null;
+    lastRxTime = 0;
     readLoop(port, readLoopAbort.signal);
 
     setConnected(true);
@@ -497,8 +558,23 @@ function appendRx(bytes) {
   if (mode === 'hex') {
     text = bytesToHex(bytes);
   } else {
-    const decoder = getDecoder(encoding);
-    text = decoder.decode(bytes, { stream: true });
+    // 必须复用同一个解码器：多字节字符（如 UTF-8 中文）被串口分包拆开时，
+    // stream 模式会把不完整的尾部字节留到下一个数据块一起解码；
+    // 每次新建解码器会把残余字节判为非法，输出 U+FFFD 乱码。
+    if (!rxDecoder) rxDecoder = getDecoder(encoding);
+    text = rxDecoder.decode(bytes, { stream: true });
+  }
+
+  if (rxTimestamp.checked) {
+    const now = Date.now();
+    const sameGroup = lastRxTime > 0 && now - lastRxTime <= GROUP_GAP_MS;
+    lastRxTime = now;
+    if (!sameGroup) {
+      text = newGroup() + text;            // 新时间组：时间独占一行
+    } else if (mode === 'hex' && !atLineStart()) {
+      text = '\n' + text;                  // 同组的 HEX 分包另起一行
+    }
+    // 同组的 ASCII 数据直接接在组内
   }
 
   rxArea.value += text;
@@ -538,6 +614,16 @@ async function sendData() {
     }
 
     await writer.write(bytes);
+
+    // 发送回显：把发送内容和时间记到接收区，方便对照收发时序
+    if (txEcho.checked) {
+      const content = (mode === 'hex')
+        ? bytesToHex(bytes)
+        : raw + ($('send-newline').checked ? '\n' : '');
+      const lead = rxTimestamp.checked ? newGroup() : (atLineStart() ? '' : '\n');
+      rxArea.value += lead + '[TX] ' + content;
+      rxArea.scrollTop = rxArea.scrollHeight;
+    }
   } catch (err) {
     alert('发送失败: ' + err.message);
   }
@@ -560,10 +646,15 @@ repeatIntv.addEventListener('change', () => {
   if (repeatSend.checked) toggleRepeatSend();
 });
 
+// 切换接收编码后重建解码器，避免旧编码的残留状态影响新数据
+$('rx-encoding').addEventListener('change', () => { rxDecoder = null; });
+
 // ---- 清空 ----
 function clearRx() {
   rxArea.value = '';
   rxTotalBytes = 0;
+  rxDecoder = null; // 丢弃残留的多字节解码状态
+  lastRxTime = 0;
   rxCount.textContent = '接收: 0 字节';
 }
 function clearTx() { txArea.value = ''; }
